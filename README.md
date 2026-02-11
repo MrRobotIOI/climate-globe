@@ -1,15 +1,15 @@
-# Climate Globe - 3D Climate Data Visualization
+# Climate Globe - Global Greenhouse Gas Emissions
 
-An interactive 3D globe visualization showing global climate threats and solutions, built with **Next.js 14**, **TypeScript**, **globe.gl**, and **Python FastAPI** backend.
+An interactive 3D globe showing **global greenhouse gas emissions** from [Climate TRACE](https://climatetrace.org), built with **Next.js 14**, **TypeScript**, **globe.gl**, and **Python FastAPI** backend.
 
 ## 🌍 Features
 
-- **Interactive 3D Globe** - Rotate, zoom, and explore climate data worldwide
-- **Climate Threats** - Visualize CO₂ emissions, temperature anomalies, deforestation, sea-level rise, and ocean heat
-- **Climate Solutions** - See renewable energy projects, reforestation efforts, conservation zones, and carbon capture
-- **Real-time Filtering** - Toggle between different data layers and categories
-- **Scientific Data** - Based on IPCC indicators and validated climate research
-- **Full-Stack Architecture** - Next.js frontend + Python FastAPI backend
+- **Interactive 3D Globe** - Rotate, zoom, and explore emissions data worldwide
+- **Global greenhouse gas emissions** - CO2e by sector (power, oil & gas, transport, agriculture, etc.) from millions of sources
+- **Year and GWP** - View by year (2021–2024) and 100-yr or 20-yr CO2e
+- **Sector filtering** - Filter by sector and search by location or owner
+- **Climate TRACE data** - Independent, asset-level emissions (CC BY 4.0)
+- **Full-Stack** - Next.js frontend + Python FastAPI backend
 
 ## 🚀 Getting Started
 

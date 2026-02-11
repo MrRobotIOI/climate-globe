@@ -47,11 +47,19 @@ export class ClimateApiClient {
   /**
    * Fetch emissions data from Climate TRACE (millions of real sources).
    * First load may take a minute; backend caches for 1 hour.
+   * year: 2021-2024. gwpYears: 100 or 20 for CO2e 100-yr / 20-yr GWP.
    */
-  async getTraceData(maxPoints = 16_500): Promise<ClimateApiResponse> {
-    const response = await fetch(
-      `${this.baseUrl}/api/climate/trace?max_points=${Math.min(100_000, Math.max(1000, maxPoints))}`
-    );
+  async getTraceData(
+    maxPoints = 16_500,
+    year = 2024,
+    gwpYears = 100
+  ): Promise<ClimateApiResponse> {
+    const params = new URLSearchParams({
+      max_points: String(Math.min(100_000, Math.max(1000, maxPoints))),
+      year: String(Math.min(2024, Math.max(2015, year))),
+      gwp_years: String(gwpYears === 20 ? 20 : 100),
+    });
+    const response = await fetch(`${this.baseUrl}/api/climate/trace?${params}`);
     if (!response.ok) {
       throw new Error(`Failed to fetch Climate TRACE data: ${response.statusText}`);
     }

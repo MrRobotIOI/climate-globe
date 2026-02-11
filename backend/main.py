@@ -22,7 +22,7 @@ from climate_trace import get_trace_threats, get_climate_stats_placeholder, stre
 # Initialize FastAPI app
 app = FastAPI(
     title="Climate Globe API",
-    description="REST API for global climate threat and solution data",
+    description="REST API for global greenhouse gas emissions data (Climate TRACE)",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
@@ -66,12 +66,7 @@ async def get_all_climate_data(
     dense: bool = Query(False, description="If true, return a dense global grid of points for a fuller globe")
 ):
     """
-    Get all climate data including threats, solutions, and statistics
-    
-    Returns comprehensive climate dataset with:
-    - Threat indicators (emissions, temperature, deforestation, etc.)
-    - Defense solutions (renewables, reforestation, conservation, etc.)
-    - Current climate statistics
+    Get climate data (emissions and statistics). Primary data source is /api/climate/trace for greenhouse gas emissions.
     
     Use ?dense=true for a dense grid of sample points that populate the whole globe.
     """
@@ -84,14 +79,18 @@ async def get_all_climate_data(
 
 @app.get("/api/climate/trace", response_model=ClimateDataResponse, tags=["Climate Data"])
 async def get_climate_trace(
-    max_points: int = Query(16_500, ge=1_000, le=100_000, description="Emissions sources to fetch from Climate TRACE (2.7M+ available)")
+    max_points: int = Query(16_500, ge=1_000, le=100_000, description="Emissions sources to fetch from Climate TRACE (2.7M+ available)"),
+    year: Optional[int] = Query(2024, ge=2015, le=2024, description="Emissions year (2015-2024)"),
+    gwp_years: int = Query(100, description="GWP horizon: 100 or 20 years for CO2e"),
 ):
     """
     Get emissions data from Climate TRACE (millions of real sources).
     Data: https://climatetrace.org/data (CC BY 4.0). First call may take a minute; result is cached 1 hour.
     """
+    if gwp_years not in (20, 100):
+        gwp_years = 100
     try:
-        threats = get_trace_threats(max_points=max_points)
+        threats = get_trace_threats(max_points=max_points, year=year, gwp_years=gwp_years)
         stats = get_climate_stats_placeholder()
         return ClimateDataResponse(
             threats=threats,
@@ -106,14 +105,19 @@ async def get_climate_trace(
 
 @app.get("/api/climate/trace/stream", tags=["Climate Data"])
 async def stream_climate_trace(
-    max_points: int = Query(16_500, ge=5_000, le=100_000, description="Total sources to stream")
+    max_points: int = Query(16_500, ge=5_000, le=100_000, description="Total sources to stream"),
+    year: Optional[int] = Query(2024, ge=2015, le=2024, description="Emissions year"),
+    gwp_years: int = Query(100, description="GWP horizon: 100 or 20 years"),
 ):
     """
     Stream emissions data from Climate TRACE in chunks so the globe can load progressively.
     Returns NDJSON: one JSON array of source objects per line.
     """
+    if gwp_years not in (20, 100):
+        gwp_years = 100
+
     def gen():
-        for chunk in stream_trace_chunks(max_points=max_points):
+        for chunk in stream_trace_chunks(max_points=max_points, year=year, gwp_years=gwp_years):
             line = json.dumps([p.model_dump() for p in chunk], default=str) + "\n"
             yield line.encode("utf-8")
 
@@ -152,11 +156,11 @@ async def get_threats(
 async def get_defense(
     category: Optional[DefenseCategory] = Query(
         None,
-        description="Filter solutions by category (renewable, reforestation, conservation, carbon-capture)"
+        description="Filter by category"
     )
 ):
     """
-    Get climate solution/defense data
+    Legacy endpoint (project focuses on emissions via /api/climate/trace).
     
     Optional filtering by category:
     - renewable: Solar and wind energy projects

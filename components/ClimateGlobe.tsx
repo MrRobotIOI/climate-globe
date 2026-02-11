@@ -92,29 +92,31 @@ export default function ClimateGlobe() {
     });
   }, []);
 
-  // Load Climate TRACE data all at once (1/3 of original: ~33k sources)
+  // Load Climate TRACE data; refetch when year or timeframe (100yr/20yr) changes
   useEffect(() => {
     const total = 16_500;
     setLoading(true);
     setError(null);
-    apiClient.getTraceData(total).then(
-      (data) => {
-        setThreatData(data.threats);
-        setDefenseData(data.defense || []);
-        setClimateStats(data.stats);
-        setLoading(false);
-      },
-      (err) => {
-        console.error('❌ Failed to load emissions data:', err);
-        setError(
-          process.env.NEXT_PUBLIC_API_URL
-            ? `Failed to load emissions data. Is the backend running at ${process.env.NEXT_PUBLIC_API_URL}?`
-            : 'Failed to load emissions data. Is the backend running on port 8000?'
-        );
-        setLoading(false);
-      }
-    );
-  }, []);
+    apiClient
+      .getTraceData(total, year, timeframe)
+      .then(
+        (data) => {
+          setThreatData(data.threats);
+          setDefenseData(data.defense || []);
+          setClimateStats(data.stats);
+          setLoading(false);
+        },
+        (err) => {
+          console.error('❌ Failed to load emissions data:', err);
+          setError(
+            process.env.NEXT_PUBLIC_API_URL
+              ? `Failed to load emissions data. Is the backend running at ${process.env.NEXT_PUBLIC_API_URL}?`
+              : 'Failed to load emissions data. Is the backend running on port 8000?'
+          );
+          setLoading(false);
+        }
+      );
+  }, [year, timeframe]);
 
   // Consolidated sector options: one entry per group, only groups that have data, fixed order
   const sectorOptions = useMemo(() => {
@@ -171,6 +173,7 @@ export default function ClimateGlobe() {
     };
   }, [globeReady]);
 
+  // Update hex bins when data or globe is ready (globeReady so we run after globe exists, not only when displayData changes)
   useEffect(() => {
     if (!globeEl.current) return;
 
@@ -219,7 +222,7 @@ export default function ClimateGlobe() {
         `;
       });
 
-  }, [displayData]);
+  }, [displayData, globeReady]);
 
   // Format emissions for display; Monthly = annual total / 12 (monthly average)
   const emissionsDisplay = useMemo(() => {
@@ -239,10 +242,10 @@ export default function ClimateGlobe() {
       <header className="absolute top-0 left-0 right-0 z-10 pointer-events-none">
         <div className="px-4 pt-4">
           <h1 className="text-white font-medium text-sm tracking-tight">
-            Greenhouse gas emissions · Climate TRACE
+            Global greenhouse gas emissions · Climate TRACE
           </h1>
           <p className="text-gray-500 text-xs mt-0.5">
-            {loading ? 'Loading…' : `${threatData.length.toLocaleString()} sources`}
+            {loading ? 'Loading…' : `${threatData.length.toLocaleString()} emissions sources`}
           </p>
         </div>
       </header>
