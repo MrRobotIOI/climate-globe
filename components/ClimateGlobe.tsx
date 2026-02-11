@@ -106,7 +106,11 @@ export default function ClimateGlobe() {
       },
       (err) => {
         console.error('❌ Failed to load emissions data:', err);
-        setError('Failed to load emissions data. Is the backend running on port 8000?');
+        setError(
+          process.env.NEXT_PUBLIC_API_URL
+            ? `Failed to load emissions data. Is the backend running at ${process.env.NEXT_PUBLIC_API_URL}?`
+            : 'Failed to load emissions data. Is the backend running on port 8000?'
+        );
         setLoading(false);
       }
     );
