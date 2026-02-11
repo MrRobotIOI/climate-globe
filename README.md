@@ -204,27 +204,3 @@ npm run build
 npm start
 ```
 
-### Linting
-
-```bash
-npm run lint
-```
-
-## 📝 Key Implementation Details
-
-- **Client-side rendering** - Globe.gl requires browser environment
-- **Dynamic imports** - Avoids SSR issues with Three.js
-- **Responsive design** - Adapts to different screen sizes
-- **Performance optimized** - Efficient data filtering and rendering
-
-## 🌟 Credits
-
-Built by Zed Ikejiani as a portfolio project demonstrating:
-- Full-stack web development skills
-- 3D visualization expertise
-- Climate data literacy
-- Modern React/TypeScript patterns
-
-## 📄 License
-
-MIT License - Feel free to use for your portfolio or projects!
