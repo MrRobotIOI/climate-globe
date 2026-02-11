@@ -5,7 +5,11 @@
 
 import { ThreatData, DefenseData } from '../types';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+// Use same-origin proxy in dev to avoid browser "local network access" prompts; production uses explicit backend URL.
+const API_BASE_URL =
+  typeof window !== 'undefined' && (!process.env.NEXT_PUBLIC_API_URL || /localhost|127\.0\.0\.1/.test(process.env.NEXT_PUBLIC_API_URL))
+    ? '/api/proxy'
+    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export interface ClimateApiResponse {
   threats: ThreatData[];
