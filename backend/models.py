@@ -27,13 +27,14 @@ class Intensity(str, Enum):
 class ThreatData(BaseModel):
     lat: float = Field(..., description="Latitude coordinate")
     lng: float = Field(..., description="Longitude coordinate")
-    value: float = Field(..., description="Threat intensity value")
+    value: float = Field(..., description="CO2e in tonnes (Climate TRACE) or legacy intensity")
     type: Literal["threat"] = "threat"
     category: ThreatCategory
     intensity: Intensity
     label: str = Field(..., description="Display label for the threat")
     description: str = Field(..., description="Detailed description")
     sector: Optional[str] = Field(None, description="Climate TRACE sector (e.g. power, oil-and-gas-production)")
+    country: Optional[str] = Field(None, description="ISO country code")
 
 
 class DefenseData(BaseModel):

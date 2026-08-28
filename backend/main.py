@@ -77,49 +77,49 @@ async def get_all_climate_data(
         raise HTTPException(status_code=500, detail=f"Failed to fetch climate data: {str(e)}")
 
 
-@app.get("/api/climate/trace", response_model=ClimateDataResponse, tags=["Climate Data"])
+@app.get("/api/climate/trace", tags=["Climate Data"])
 async def get_climate_trace(
-    max_points: int = Query(16_500, ge=1_000, le=100_000, description="Emissions sources to fetch from Climate TRACE (2.7M+ available)"),
-    year: Optional[int] = Query(2024, ge=2015, le=2024, description="Emissions year (2015-2024)"),
+    max_points: int = Query(10_000, ge=1_000, le=50_000, description="Top-ranked Climate TRACE sources to return"),
+    year: Optional[int] = Query(2025, ge=2021, le=2026, description="Emissions year (2021-2026)"),
     gwp_years: int = Query(100, description="GWP horizon: 100 or 20 years for CO2e"),
 ):
     """
-    Get emissions data from Climate TRACE (millions of real sources).
-    Data: https://climatetrace.org/data (CC BY 4.0). First call may take a minute; result is cached 1 hour.
+    Get ranked emissions sources from Climate TRACE.
+    Data: https://climatetrace.org/data (CC BY 4.0). First call is cached 1 hour.
+    `value` is tonnes of CO2e.
     """
     if gwp_years not in (20, 100):
         gwp_years = 100
     try:
-        threats = get_trace_threats(max_points=max_points, year=year, gwp_years=gwp_years)
+        threats = await get_trace_threats(max_points=max_points, year=year, gwp_years=gwp_years)
         stats = get_climate_stats_placeholder()
-        return ClimateDataResponse(
-            threats=threats,
-            defense=[],  # Climate TRACE is emissions only; use /api/climate/all for defense layers
-            stats=stats,
-            total_threats=len(threats),
-            total_defense=0,
-        )
+        return {
+            "threats": threats,
+            "defense": [],
+            "stats": stats.model_dump(),
+            "total_threats": len(threats),
+            "total_defense": 0,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch Climate TRACE data: {str(e)}")
 
 
 @app.get("/api/climate/trace/stream", tags=["Climate Data"])
 async def stream_climate_trace(
-    max_points: int = Query(16_500, ge=5_000, le=100_000, description="Total sources to stream"),
-    year: Optional[int] = Query(2024, ge=2015, le=2024, description="Emissions year"),
+    max_points: int = Query(10_000, ge=1_000, le=50_000, description="Total sources to stream"),
+    year: Optional[int] = Query(2025, ge=2021, le=2026, description="Emissions year"),
     gwp_years: int = Query(100, description="GWP horizon: 100 or 20 years"),
 ):
     """
-    Stream emissions data from Climate TRACE in chunks so the globe can load progressively.
-    Returns NDJSON: one JSON array of source objects per line.
+    Stream ranked Climate TRACE sources as NDJSON (one JSON array per line)
+    so the globe can render the first page immediately.
     """
     if gwp_years not in (20, 100):
         gwp_years = 100
 
-    def gen():
-        for chunk in stream_trace_chunks(max_points=max_points, year=year, gwp_years=gwp_years):
-            line = json.dumps([p.model_dump() for p in chunk], default=str) + "\n"
-            yield line.encode("utf-8")
+    async def gen():
+        async for chunk in stream_trace_chunks(max_points=max_points, year=year, gwp_years=gwp_years):
+            yield (json.dumps(chunk, separators=(",", ":")) + "\n").encode("utf-8")
 
     return StreamingResponse(
         gen(),
@@ -230,6 +230,7 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0",
         port=8000,
-        reload=True,  # Auto-reload on code changes
-        log_level="info"
+        reload=True,
+        reload_excludes=["venv", ".venv", "**/site-packages/**"],
+        log_level="info",
     )

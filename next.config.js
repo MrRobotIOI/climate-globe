@@ -1,20 +1,11 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Proxy API requests to the backend so the browser never calls localhost:8000 directly
-  // (avoids "local network access" prompts). In production, set NEXT_PUBLIC_API_URL to your backend URL.
-  async rewrites() {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL;
-    if (apiUrl && (apiUrl.includes('localhost') || apiUrl.includes('127.0.0.1'))) {
-      const target = apiUrl.replace(/\/$/, '');
-      return [{ source: '/api/proxy/:path*', destination: `${target}/:path*` }];
+  webpack: (config, { dev }) => {
+    if (dev) {
+      config.watchOptions = {
+        ignored: ['**/node_modules/**', '**/.git/**', '**/backend/**'],
+      };
     }
-    return [];
-  },
-  webpack: (config) => {
-    config.module.rules.push({
-      test: /\.node$/,
-      use: 'node-loader',
-    });
     return config;
   },
 };

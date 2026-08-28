@@ -1,169 +1,219 @@
 """
-Climate TRACE API client.
-Fetches millions of emissions sources from https://api.climatetrace.org
+Climate TRACE API client (v7).
+Fetches ranked emissions sources from https://api.climatetrace.org
 Data: CC BY 4.0, https://climatetrace.org/data
 """
 
+from __future__ import annotations
+
+import asyncio
 import time
-from typing import List, Any, Optional
+from typing import Any, AsyncIterator, Optional
+
 import httpx
-from models import ThreatData, ThreatCategory, Intensity, ClimateStats
+
+from models import ClimateStats
 
 
-TRACE_API_BASE = "https://api.climatetrace.org/v6"
-# Max assets to fetch (API is paginated; 2.7M+ total available)
-DEFAULT_MAX_POINTS = 16_500
-PAGE_SIZE = 5000
-CACHE_TTL_SEC = 3600  # 1 hour
+TRACE_API_BASE = "https://api.climatetrace.org/v7"
+DEFAULT_MAX_POINTS = 10_000
+PAGE_SIZE = 1_000
+MAX_CONCURRENCY = 4
+CACHE_TTL_SEC = 3600
+USER_AGENT = "climate-globe/1.0 (https://github.com/climatetrace)"
+
+# (max_points, year, gwp_years) -> {points, ts}
+_cache: dict[tuple, dict[str, Any]] = {}
+_client: Optional[httpx.AsyncClient] = None
 
 
-_cache: Optional[dict] = None
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(
+            timeout=httpx.Timeout(45.0, connect=10.0),
+            headers={
+                "User-Agent": USER_AGENT,
+                "Accept": "application/json",
+            },
+        )
+    return _client
 
 
-def _parse_emissions_quantity(asset: dict, gwp_years: int = 100) -> float:
-    """Get CO2e emissions in tonnes from EmissionsSummary. gwp_years: 20 or 100 for GWP horizon."""
-    gas_key = "co2e_20yr" if gwp_years == 20 else "co2e_100yr"
-    for summary in asset.get("EmissionsSummary") or []:
-        if summary.get("Gas") == gas_key:
-            q = summary.get("EmissionsQuantity")
-            return float(q) if q is not None else 0.0
-    # Fallback: try the other GWP if primary missing
-    other = "co2e_100yr" if gas_key == "co2e_20yr" else "co2e_20yr"
-    for summary in asset.get("EmissionsSummary") or []:
-        if summary.get("Gas") == other:
-            q = summary.get("EmissionsQuantity")
-            return float(q) if q is not None else 0.0
-    return 0.0
+def _cache_get(key: tuple) -> Optional[list[dict]]:
+    entry = _cache.get(key)
+    if entry is None:
+        return None
+    if (time.time() - entry["ts"]) >= CACHE_TTL_SEC:
+        _cache.pop(key, None)
+        return None
+    return entry["points"]
 
 
-def _asset_to_threat(asset: dict, gwp_years: int = 100) -> ThreatData:
-    """Map Climate TRACE asset to our ThreatData (emissions threat)."""
-    geom = (asset.get("Centroid") or {}).get("Geometry") or [0, 0]
-    lng, lat = float(geom[0]), float(geom[1])
-    value = _parse_emissions_quantity(asset, gwp_years)
-    # Convert tonnes to Gt for display consistency (optional: keep in t for big numbers)
-    value_gt = value / 1e9 if value >= 1e9 else value / 1e6  # Gt or Mt
-    sector = (asset.get("Sector") or "other").replace("-", " ")
-    name = (asset.get("Name") or "Asset").strip() or f"Source ({sector})"
-    intensity = Intensity.HIGH if value_gt >= 1 else (Intensity.MEDIUM if value_gt >= 0.01 else Intensity.LOW)
-    gwp_label = f"{gwp_years}yr"
-    return ThreatData(
-        lat=lat,
-        lng=lng,
-        value=value_gt,
-        type="threat",
-        category=ThreatCategory.EMISSIONS,
-        intensity=intensity,
-        label=name[:200],
-        description=f"{sector} • {value:,.0f} t CO2e {gwp_label}",
-        sector=asset.get("Sector") or "other",
-    )
+def _cache_set(key: tuple, points: list[dict]) -> None:
+    _cache[key] = {"points": points, "ts": time.time()}
+    if len(_cache) > 12:
+        oldest = min(_cache, key=lambda k: _cache[k]["ts"])
+        _cache.pop(oldest, None)
 
 
-def fetch_trace_assets(limit: int = PAGE_SIZE, offset: int = 0, year: Optional[int] = None) -> dict:
-    """One page of assets from Climate TRACE API. year: optional filter (e.g. 2021-2024); may be ignored by API."""
-    params: dict = {"limit": limit, "offset": offset}
+def _source_to_point(src: dict, gwp_years: int) -> Optional[dict]:
+    """Map a v7 source to a compact globe point. value is tonnes CO2e."""
+    centroid = src.get("centroid") or {}
+    lat, lng = centroid.get("latitude"), centroid.get("longitude")
+    if lat is None or lng is None:
+        return None
+    try:
+        tonnes = float(src.get("emissionsQuantity") or 0)
+        lat_f, lng_f = float(lat), float(lng)
+    except (TypeError, ValueError):
+        return None
+    if tonnes <= 0:
+        return None
+    sector = (src.get("subsector") or src.get("sector") or "other").strip() or "other"
+    name = (src.get("name") or "Source").strip() or "Source"
+    country = (src.get("country") or "").strip()
+    return {
+        "lat": round(lat_f, 4),
+        "lng": round(lng_f, 4),
+        "value": round(tonnes, 1),
+        "type": "threat",
+        "category": "emissions",
+        "intensity": "high" if tonnes >= 1e7 else ("medium" if tonnes >= 1e5 else "low"),
+        "label": name[:160],
+        "description": f"{sector.replace('-', ' ')} • {country}" if country else sector.replace("-", " "),
+        "sector": sector,
+        "country": country,
+        "gwp_years": gwp_years,
+    }
+
+
+async def _fetch_page(
+    *,
+    limit: int,
+    offset: int,
+    year: Optional[int],
+    gas: str,
+) -> list[dict]:
+    params: dict[str, Any] = {"limit": limit, "offset": offset, "gas": gas}
     if year is not None:
         params["year"] = year
-    with httpx.Client(timeout=30.0) as client:
+
+    client = _get_client()
+    last_error: Optional[Exception] = None
+    for attempt in range(3):
         try:
-            r = client.get(f"{TRACE_API_BASE}/assets", params=params)
+            r = await client.get(f"{TRACE_API_BASE}/sources", params=params)
+            if r.status_code in (429, 500, 502, 503, 504) and attempt < 2:
+                await asyncio.sleep(0.6 * (attempt + 1))
+                continue
             r.raise_for_status()
-            return r.json()
-        except Exception:
-            if year is not None:
-                params.pop("year", None)
-                r = client.get(f"{TRACE_API_BASE}/assets", params=params)
-                r.raise_for_status()
-                return r.json()
+            data = r.json()
+            return data if isinstance(data, list) else (data.get("sources") or [])
+        except (httpx.TimeoutException, httpx.TransportError) as e:
+            last_error = e
+            if attempt < 2:
+                await asyncio.sleep(0.6 * (attempt + 1))
+                continue
             raise
+    if last_error:
+        raise last_error
+    return []
 
 
-def stream_trace_chunks(
-    max_points: int = 16_500,
-    chunk_size: int = PAGE_SIZE,
-    year: Optional[int] = None,
-    gwp_years: int = 100,
-):
-    """Yield chunks of ThreatData as we fetch from Climate TRACE API (for progressive loading)."""
-    offset = 0
-    while offset < max_points:
-        try:
-            data = fetch_trace_assets(limit=chunk_size, offset=offset, year=year)
-            assets = data.get("assets") or []
-            if not assets:
-                break
-            chunk: List[ThreatData] = []
-            for asset in assets:
-                try:
-                    centroid = (asset.get("Centroid") or {}).get("Geometry")
-                    if not centroid or len(centroid) < 2:
-                        continue
-                    chunk.append(_asset_to_threat(asset, gwp_years))
-                except Exception:
-                    continue
-            if chunk:
-                yield chunk
-            if len(assets) < chunk_size:
-                break
-            offset += chunk_size
-            time.sleep(0.15)
-        except Exception:
-            break
-
-
-def get_trace_threats(
+async def stream_trace_chunks(
     max_points: int = DEFAULT_MAX_POINTS,
     year: Optional[int] = None,
     gwp_years: int = 100,
-) -> List[ThreatData]:
-    """
-    Fetch up to max_points emissions sources from Climate TRACE and return as ThreatData.
-    year: optional (e.g. 2021-2024). gwp_years: 20 or 100 for CO2e 20yr/100yr GWP.
-    Uses in-memory cache for CACHE_TTL_SEC to avoid hammering the API.
-    """
-    global _cache
+) -> AsyncIterator[list[dict]]:
+    """Yield compact source dicts as Climate TRACE pages arrive (progressive load)."""
+    gas = "co2e_20yr" if gwp_years == 20 else "co2e_100yr"
     cache_key = (max_points, year, gwp_years)
-    now = time.time()
-    if (
-        _cache is not None
-        and (now - _cache["ts"]) < CACHE_TTL_SEC
-        and _cache.get("cache_key") == cache_key
-    ):
-        return _cache["threats"][:max_points]
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        for i in range(0, len(cached), PAGE_SIZE):
+            yield cached[i : i + PAGE_SIZE]
+        return
 
-    threats: List[ThreatData] = []
-    offset = 0
-    while len(threats) < max_points:
-        try:
-            data = fetch_trace_assets(limit=PAGE_SIZE, offset=offset, year=year)
-            assets = data.get("assets") or []
-            if not assets:
-                break
-            for asset in assets:
-                try:
-                    centroid = (asset.get("Centroid") or {}).get("Geometry")
-                    if not centroid or len(centroid) < 2:
-                        continue
-                    t = _asset_to_threat(asset, gwp_years)
-                    threats.append(t)
-                    if len(threats) >= max_points:
+    collected: list[dict] = []
+    offsets = list(range(0, max_points, PAGE_SIZE))
+    if not offsets:
+        return
+
+    first_limit = min(PAGE_SIZE, max_points)
+    first_page = await _fetch_page(limit=first_limit, offset=0, year=year, gas=gas)
+    if not first_page:
+        raise RuntimeError("Climate TRACE returned no sources for this year")
+    first_chunk = []
+    for src in first_page:
+        point = _source_to_point(src, gwp_years)
+        if point:
+            first_chunk.append(point)
+    if first_chunk:
+        collected.extend(first_chunk)
+        yield first_chunk
+    if len(first_page) < first_limit:
+        _cache_set(cache_key, collected)
+        return
+
+    remaining = offsets[1:]
+    sem = asyncio.Semaphore(MAX_CONCURRENCY)
+
+    async def fetch_offset(offset: int) -> list[dict]:
+        limit = min(PAGE_SIZE, max_points - offset)
+        async with sem:
+            return await _fetch_page(limit=limit, offset=offset, year=year, gas=gas)
+
+    tasks = [asyncio.create_task(fetch_offset(off)) for off in remaining]
+    finished_ok = False
+    try:
+        for task in asyncio.as_completed(tasks):
+            page = await task
+            chunk = []
+            for src in page:
+                point = _source_to_point(src, gwp_years)
+                if point:
+                    chunk.append(point)
+                    if len(collected) + len(chunk) >= max_points:
                         break
-                except Exception:
-                    continue
-            if len(assets) < PAGE_SIZE:
+            if chunk:
+                collected.extend(chunk)
+                yield chunk
+            if len(collected) >= max_points:
                 break
-            offset += PAGE_SIZE
-            time.sleep(0.2)  # be nice to the API
-        except Exception:
-            break
+        finished_ok = True
+    except asyncio.CancelledError:
+        raise
+    finally:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
 
-    _cache = {"threats": threats, "ts": now, "cache_key": cache_key}
-    return threats
+    if finished_ok:
+        _cache_set(cache_key, collected[:max_points])
+
+
+async def get_trace_threats(
+    max_points: int = DEFAULT_MAX_POINTS,
+    year: Optional[int] = None,
+    gwp_years: int = 100,
+) -> list[dict]:
+    """Fetch up to max_points ranked sources. Uses in-memory cache for CACHE_TTL_SEC."""
+    cache_key = (max_points, year, gwp_years)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached[:max_points]
+
+    threats: list[dict] = []
+    async for chunk in stream_trace_chunks(max_points=max_points, year=year, gwp_years=gwp_years):
+        threats.extend(chunk)
+        if len(threats) >= max_points:
+            break
+    return threats[:max_points]
 
 
 def get_climate_stats_placeholder() -> ClimateStats:
-    """Stats when using Climate TRACE (we don't have global stats from API here)."""
+    """Headline stats are not returned by the sources list endpoint."""
     return ClimateStats(
         global_temperature="+1.24°C above pre-industrial",
         co2_concentration="422.5 ppm",

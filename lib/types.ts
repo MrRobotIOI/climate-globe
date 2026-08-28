@@ -13,6 +13,7 @@ export interface ThreatData extends ClimateDataPoint {
   category: 'emissions' | 'temperature' | 'deforestation' | 'sea-level' | 'ocean-heat';
   intensity: 'high' | 'medium' | 'low';
   sector?: string; // Climate TRACE sector (e.g. power, oil-and-gas-production)
+  country?: string;
 }
 
 export interface DefenseData extends ClimateDataPoint {

@@ -45,21 +45,21 @@ export class ClimateApiClient {
   }
 
   /**
-   * Fetch emissions data from Climate TRACE (millions of real sources).
-   * First load may take a minute; backend caches for 1 hour.
-   * year: 2021-2024. gwpYears: 100 or 20 for CO2e 100-yr / 20-yr GWP.
+   * Fetch ranked Climate TRACE sources.
+   * `value` is tonnes of CO2e. year: 2021-2026. gwpYears: 100 or 20.
    */
   async getTraceData(
-    maxPoints = 16_500,
-    year = 2024,
-    gwpYears = 100
+    maxPoints = 10_000,
+    year = 2025,
+    gwpYears = 100,
+    signal?: AbortSignal
   ): Promise<ClimateApiResponse> {
     const params = new URLSearchParams({
-      max_points: String(Math.min(100_000, Math.max(1000, maxPoints))),
-      year: String(Math.min(2024, Math.max(2015, year))),
+      max_points: String(Math.min(50_000, Math.max(1000, maxPoints))),
+      year: String(Math.min(2026, Math.max(2021, year))),
       gwp_years: String(gwpYears === 20 ? 20 : 100),
     });
-    const response = await fetch(`${this.baseUrl}/api/climate/trace?${params}`);
+    const response = await fetch(`${this.baseUrl}/api/climate/trace?${params}`, { signal });
     if (!response.ok) {
       throw new Error(`Failed to fetch Climate TRACE data: ${response.statusText}`);
     }
@@ -67,29 +67,44 @@ export class ClimateApiClient {
   }
 
   /**
-   * Stream emissions data from Climate TRACE; call onChunk for each chunk and onComplete when done.
-   * Progress can be shown as (accumulated count / maxPoints).
+   * Stream ranked Climate TRACE sources; call onChunk for each page.
    */
-  async streamTraceData(
-    maxPoints: number,
-    onChunk: (sources: ThreatData[]) => void,
-    onComplete: () => void,
-    onError: (err: Error) => void
-  ): Promise<void> {
-    const url = `${this.baseUrl}/api/climate/trace/stream?max_points=${Math.min(100_000, Math.max(5000, maxPoints))}`;
-    const response = await fetch(url);
-    if (!response.ok) {
-      onError(new Error(`Failed to stream: ${response.statusText}`));
-      return;
-    }
-    const reader = response.body?.getReader();
-    if (!reader) {
-      onError(new Error('No response body'));
-      return;
-    }
-    const decoder = new TextDecoder();
-    let buffer = '';
+  async streamTraceData(options: {
+    maxPoints?: number;
+    year?: number;
+    gwpYears?: number;
+    signal?: AbortSignal;
+    onChunk: (sources: ThreatData[]) => void;
+    onComplete: () => void;
+    onError: (err: Error) => void;
+  }): Promise<void> {
+    const {
+      maxPoints = 10_000,
+      year = 2025,
+      gwpYears = 100,
+      signal,
+      onChunk,
+      onComplete,
+      onError,
+    } = options;
+    const params = new URLSearchParams({
+      max_points: String(Math.min(50_000, Math.max(1000, maxPoints))),
+      year: String(Math.min(2026, Math.max(2021, year))),
+      gwp_years: String(gwpYears === 20 ? 20 : 100),
+    });
     try {
+      const response = await fetch(`${this.baseUrl}/api/climate/trace/stream?${params}`, { signal });
+      if (!response.ok) {
+        onError(new Error(`Failed to stream: ${response.statusText}`));
+        return;
+      }
+      const reader = response.body?.getReader();
+      if (!reader) {
+        onError(new Error('No response body'));
+        return;
+      }
+      const decoder = new TextDecoder();
+      let buffer = '';
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -116,18 +131,18 @@ export class ClimateApiClient {
       }
       onComplete();
     } catch (e) {
+      if (signal?.aborted || (e instanceof DOMException && e.name === 'AbortError')) {
+        return;
+      }
       onError(e instanceof Error ? e : new Error(String(e)));
     }
   }
 
-  /**
-   * Fetch only threat data, optionally filtered by category
-   */
   async getThreats(category?: string): Promise<ThreatData[]> {
-    const url = category 
+    const url = category
       ? `${this.baseUrl}/api/climate/threats?category=${category}`
       : `${this.baseUrl}/api/climate/threats`;
-    
+
     const response = await fetch(url);
     if (!response.ok) {
       throw new Error(`Failed to fetch threat data: ${response.statusText}`);
@@ -135,14 +150,11 @@ export class ClimateApiClient {
     return response.json();
   }
 
-  /**
-   * Fetch only defense data, optionally filtered by category
-   */
   async getDefense(category?: string): Promise<DefenseData[]> {
     const url = category
       ? `${this.baseUrl}/api/climate/defense?category=${category}`
       : `${this.baseUrl}/api/climate/defense`;
-    
+
     const response = await fetch(url);
     if (!response.ok) {
       throw new Error(`Failed to fetch defense data: ${response.statusText}`);
@@ -150,9 +162,6 @@ export class ClimateApiClient {
     return response.json();
   }
 
-  /**
-   * Fetch climate statistics
-   */
   async getClimateStats() {
     const response = await fetch(`${this.baseUrl}/api/climate/stats`);
     if (!response.ok) {
@@ -161,9 +170,6 @@ export class ClimateApiClient {
     return response.json();
   }
 
-  /**
-   * Get data summary
-   */
   async getDataSummary() {
     const response = await fetch(`${this.baseUrl}/api/climate/summary`);
     if (!response.ok) {
@@ -172,9 +178,6 @@ export class ClimateApiClient {
     return response.json();
   }
 
-  /**
-   * Check backend health
-   */
   async healthCheck() {
     const response = await fetch(`${this.baseUrl}/api/health`);
     if (!response.ok) {
@@ -184,5 +187,4 @@ export class ClimateApiClient {
   }
 }
 
-// Singleton instance
 export const apiClient = new ClimateApiClient();
