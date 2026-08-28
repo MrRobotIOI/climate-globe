@@ -6,8 +6,8 @@ An interactive 3D globe showing **global greenhouse gas emissions** from [Climat
 
 - **Interactive 3D Globe** - Rotate, zoom, and explore emissions data worldwide
 - **Global greenhouse gas emissions** - CO2e by sector (power, oil & gas, transport, agriculture, etc.) from millions of sources
-- **Year and GWP** - View by year (2021–2024) and 100-yr or 20-yr CO2e
-- **Sector filtering** - Filter by sector and search by location or owner
+- **Year and GWP** - View by year (2021–2025) and 100-yr or 20-yr CO2e
+- **Sector filtering** - Filter by sector and search by name, country, or sector
 - **Climate TRACE data** - Independent, asset-level emissions (CC BY 4.0)
 - **Full-Stack** - Next.js frontend + Python FastAPI backend
 

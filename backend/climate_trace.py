@@ -30,8 +30,11 @@ _client: Optional[httpx.AsyncClient] = None
 def _get_client() -> httpx.AsyncClient:
     global _client
     if _client is None or _client.is_closed:
+        # trust_env=False: ignore HTTP(S)_PROXY from Cursor/agent shells.
+        # Those proxies 403 Climate TRACE and take the globe down.
         _client = httpx.AsyncClient(
             timeout=httpx.Timeout(45.0, connect=10.0),
+            trust_env=False,
             headers={
                 "User-Agent": USER_AGENT,
                 "Accept": "application/json",

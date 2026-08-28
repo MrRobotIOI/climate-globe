@@ -7,7 +7,7 @@ import type { ThreatData } from '@/lib/types';
 let Globe: any = null;
 
 const SOURCE_LIMIT = 10_000;
-const YEARS = [2025, 2024, 2023, 2022, 2021];
+const YEARS = [2026, 2025, 2024, 2023, 2022, 2021];
 const TIMEFRAME_OPTIONS = [
   { id: 100, label: '100 YR' },
   { id: 20, label: '20 YR' },
@@ -157,6 +157,17 @@ export default function ClimateGlobe() {
     setError(null);
     setThreatData([]);
 
+    const fail = (err: Error) => {
+      if (controller.signal.aborted) return;
+      console.error('Failed to load emissions data:', err);
+      setError(
+        process.env.NEXT_PUBLIC_API_URL
+          ? `Failed to load emissions data. Is the backend running at ${process.env.NEXT_PUBLIC_API_URL}?`
+          : 'Failed to load emissions data. Is the backend running on port 8000?'
+      );
+      setLoading(false);
+    };
+
     apiClient.streamTraceData({
       maxPoints: SOURCE_LIMIT,
       year,
@@ -165,20 +176,20 @@ export default function ClimateGlobe() {
       onChunk: (chunk) => {
         if (controller.signal.aborted) return;
         setThreatData((prev) => (prev.length ? prev.concat(chunk) : chunk));
-        setLoading(true);
       },
       onComplete: () => {
         if (!controller.signal.aborted) setLoading(false);
       },
       onError: (err) => {
         if (controller.signal.aborted) return;
-        console.error('Failed to load emissions data:', err);
-        setError(
-          process.env.NEXT_PUBLIC_API_URL
-            ? `Failed to load emissions data. Is the backend running at ${process.env.NEXT_PUBLIC_API_URL}?`
-            : 'Failed to load emissions data. Is the backend running on port 8000?'
-        );
-        setLoading(false);
+        apiClient
+          .getTraceData(SOURCE_LIMIT, year, timeframe, controller.signal)
+          .then((data) => {
+            if (controller.signal.aborted) return;
+            setThreatData(data.threats || []);
+            setLoading(false);
+          })
+          .catch(() => fail(err));
       },
     });
 

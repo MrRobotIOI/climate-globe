@@ -117,9 +117,21 @@ async def stream_climate_trace(
     if gwp_years not in (20, 100):
         gwp_years = 100
 
+    agen = stream_trace_chunks(max_points=max_points, year=year, gwp_years=gwp_years)
+    try:
+        first = await agen.__anext__()
+    except StopAsyncIteration:
+        raise HTTPException(status_code=502, detail="Climate TRACE returned no sources")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch Climate TRACE data: {e}")
+
     async def gen():
-        async for chunk in stream_trace_chunks(max_points=max_points, year=year, gwp_years=gwp_years):
-            yield (json.dumps(chunk, separators=(",", ":")) + "\n").encode("utf-8")
+        yield (json.dumps(first, separators=(",", ":")) + "\n").encode("utf-8")
+        try:
+            async for chunk in agen:
+                yield (json.dumps(chunk, separators=(",", ":")) + "\n").encode("utf-8")
+        except Exception:
+            return
 
     return StreamingResponse(
         gen(),
@@ -231,6 +243,7 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8000,
         reload=True,
+        reload_dirs=[os.path.dirname(__file__)],
         reload_excludes=["venv", ".venv", "**/site-packages/**"],
         log_level="info",
     )

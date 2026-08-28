@@ -18,6 +18,7 @@ __pycache__/
 *.py[cod]
 *.pyo
 /backend/__pycache__/
+/backend/venv/
 
 # misc
 .DS_Store
